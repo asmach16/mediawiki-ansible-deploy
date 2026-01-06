@@ -1,0 +1,110 @@
+---
+# Playbook unique pour MariaDB + Apache/PHP + MediaWiki
+
+- name: Préparation du serveur de base de données (MariaDB)
+  hosts: db
+  become: yes
+
+  tasks:
+    - name: Installer MariaDB
+      apt:
+        name: mariadb-server
+        state: present
+        update_cache: yes
+
+    - name: S'assurer que MariaDB est démarré et activé
+      service:
+        name: mariadb
+        state: started
+        enabled: yes
+
+    - name: Installer les modules Python pour MariaDB
+      apt:
+        name:
+          - python3-pymysql
+        state: present
+
+    - name: Créer la base de données MediaWiki
+      community.mysql.mysql_db:
+        name: mediawiki
+        state: present
+        login_user: wikiuser
+        login_password: "123456*"
+
+    - name: Créer l'utilisateur dédié pour MediaWiki
+      community.mysql.mysql_user:
+        name: wikiuser
+        password: "123456*"
+        host: "%"
+        priv: "mediawiki.*:ALL"
+        state: present
+        login_password: "123456*"
+
+- name: Préparation du serveur web (Apache/PHP/MediaWiki)
+  hosts: web
+  become: yes
+
+  tasks:
+    - name: Installer Apache et PHP
+      apt:
+        name:
+          - apache2
+          - php
+          - php-mysql
+          - php-xml
+          - php-intl
+          - php-mbstring
+          - php-apcu
+          - php-gd
+        state: present
+        update_cache: yes
+
+    - name: S'assurer qu'Apache est démarré et activé
+      service:
+        name: apache2
+        state: started
+        enabled: yes
+
+    - name: Télécharger MediaWiki
+      get_url:
+        url: https://releases.wikimedia.org/mediawiki/1.41/mediawiki-1.41.1.tar.gz
+        dest: /tmp/mediawiki.tar.gz
+
+    - name: Extraire MediaWiki
+      unarchive:
+        src: /tmp/mediawiki.tar.gz
+        dest: /var/www/
+        remote_src: yes
+
+    - name: Renommer le dossier MediaWiki
+      command: mv /var/www/mediawiki-1.41.1 /var/www/mediawiki
+      args:
+        creates: /var/www/mediawiki
+
+    - name: Créer le vhost pour MediaWiki
+      copy:
+        dest: /etc/apache2/sites-available/mediawiki.conf
+        content: |
+          <VirtualHost *:80>
+              ServerName srv-web-wiki
+              DocumentRoot /var/www
+              Alias /mediawiki /var/www/mediawiki
+
+              <Directory /var/www/mediawiki>
+                  Options FollowSymLinks
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+          </VirtualHost>
+
+    - name: Activer le site MediaWiki
+      command: a2ensite mediawiki.conf
+
+    - name: Activer mod_rewrite
+      command: a2enmod rewrite
+
+    - name: Recharger Apache
+      service:
+        name: apache2
+        state: restarted
+
